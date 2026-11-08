@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#10161f">
+<title>Fieldline EMF Meter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Condensed:wght@500;700&family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+/* Layout: one-column field instrument — gauge on top, live trace, controls, event log */
+:root{
+  --bg:#10161f; --panel:#18212d; --line:#2a3646; --fg:#e7e2d6; --muted:#8d97a5;
+  --brass:#e0a64b; --calm:#6fb6a8; --warn:#e0a64b; --hot:#e2604f;
+  --display:"Saira Condensed","Arial Narrow",system-ui,sans-serif;
+  --body:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg)}
+body{font:15px/1.5 var(--body);padding-top:env(safe-area-inset-top,0px);padding-bottom:max(16px,env(safe-area-inset-bottom,0px))}
+.wrap{max-width:560px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:16px 24px;display:grid;gap:16px}
+header{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+h1{font:700 1.6rem/1 var(--display);letter-spacing:.06em;text-transform:uppercase;margin:0}
+h1 span{color:var(--brass)}
+.status{font:600 .72rem/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:6px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.status.live{color:var(--calm);border-color:var(--calm)}
+.status.err{color:var(--hot);border-color:var(--hot)}
+.gauge{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:8px}
+canvas{display:block;width:100%;max-width:100%}
+#dial{aspect-ratio:2/1.15}
+.readout{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+.big{font:700 3.4rem/1 var(--display);font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.big small{font:600 1rem var(--mono);color:var(--muted);margin-left:4px}
+.label{font:600 .7rem/1.2 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.delta{text-align:right}
+.delta .v{font:600 1.6rem/1 var(--mono);font-variant-numeric:tabular-nums}
+.axes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font:400 .85rem var(--mono);font-variant-numeric:tabular-nums;color:var(--muted)}
+.axes b{color:var(--fg);font-weight:600}
+.hint{font-size:.92rem;padding:10px 12px;border-radius:10px;background:var(--bg);border-left:3px solid var(--calm)}
+.hint.warn{border-color:var(--warn)} .hint.hot{border-color:var(--hot)}
+.moving{font:600 .75rem var(--mono);color:var(--warn);letter-spacing:.06em;text-transform:uppercase}
+.trace{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 12px 8px}
+#trace{height:140px}
+.controls{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+button{font:600 .95rem var(--body);color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 10px;cursor:pointer;min-height:48px}
+button.primary{background:var(--brass);color:#1a1206;border-color:var(--brass)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+button[aria-pressed="true"]{border-color:var(--calm);color:var(--calm)}
+.slider{grid-column:1/-1;display:grid;gap:6px}
+.slider .row{display:flex;justify-content:space-between}
+input[type=range]{width:100%;accent-color:var(--brass)}
+section h2{font:700 1.05rem/1 var(--display);letter-spacing:.08em;text-transform:uppercase;margin:0 0 8px}
+.log{list-style:none;margin:0;padding:0;display:grid;gap:6px;max-height:260px;overflow-y:auto}
+.log li{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:baseline;font:400 .85rem var(--mono);font-variant-numeric:tabular-nums;padding:8px 10px;background:var(--panel);border-radius:8px}
+.log .t{color:var(--muted)} .log .d{font-weight:600}
+.empty{color:var(--muted);font-size:.9rem}
+details{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+summary{cursor:pointer;font-weight:600}
+details p,details li{color:var(--muted);font-size:.92rem;max-width:65ch}
+details code{font-family:var(--mono);color:var(--fg);word-break:break-all}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Field<span>line</span> EMF</h1>
+    <span id="status" class="status">Not started</span>
+  </header>
+
+  <div class="gauge">
+    <canvas id="dial" aria-label="Change in magnetic field gauge"></canvas>
+    <div class="readout">
+      <div>
+        <div class="label">Total field</div>
+        <div class="big"><span id="total">--</span><small>µT</small></div>
+      </div>
+      <div class="delta">
+        <div class="label">Change from baseline</div>
+        <div class="v" id="delta">--</div>
+      </div>
+    </div>
+    <div class="axes">
+      <div>X <b id="ax">--</b></div><div>Y <b id="ay">--</b></div><div>Z <b id="az">--</b></div>
+    </div>
+    <div id="moving" class="moving" hidden>Phone is moving · readings unreliable</div>
+    <div id="hint" class="hint">Tap Start, lay the phone flat and keep it still. The first two seconds set the baseline.</div>
+  </div>
+
+  <div class="trace">
+    <div class="label" style="margin-bottom:6px">Last 20 seconds · change from baseline (µT)</div>
+    <canvas id="trace"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="start" class="primary">Start sensor</button>
+    <button id="calib">Set baseline here</button>
+    <button id="sound" aria-pressed="false">Sound alerts: off</button>
+    <button id="export">Export log (CSV)</button>
+    <div class="slider">
+      <div class="row"><label for="thresh" class="label">Alert when change exceeds</label><span id="threshv" class="label">5 µT</span></div>
+      <input id="thresh" type="range" min="1" max="50" step="1" value="5">
+    </div>
+  </div>
+
+  <section>
+    <h2>Spike log</h2>
+    <ul id="log" class="log"><li class="empty" style="display:block;background:none;padding:0">No spikes yet. Each one is saved here with the time and likely cause.</li></ul>
+  </section>
+
+  <details>
+    <summary>How to get it working</summary>
+    <ol>
+      <li>Upload this file to any website with <b>https</b> (your own hosting works). The sensor will not run from a file opened off the phone's storage.</li>
+      <li>Open it in <b>Chrome on Android</b>.</li>
+      <li>If the status says "Sensor not available", open <code>chrome://flags</code>, search for <code>Generic Sensor Extra Classes</code>, set it to Enabled and relaunch Chrome.</li>
+      <li>iPhones are not supported. Safari does not give websites raw magnetometer readings, so an iPhone version needs a native app.</li>
+    </ol>
+    <p>What the numbers mean: Earth's own field is roughly 25–65 µT (around 25–30 µT in South Africa). The meter watches for changes from your baseline. Wiring, appliances, speakers, steel and the phone itself moving all cause real spikes, so check the suggested cause before calling anything unexplained.</p>
+  </details>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const statusEl = $('status');
+  let sensor = null, baseline = null, calibSamples = [], calibrating = false;
+  let threshold = 5, soundOn = false, audioCtx = null, lastAlert = 0, moving = false, lastMove = 0;
+  const history = []; // {t, d}
+  const events = [];
+  const WINDOW_MS = 20000;
+  let cur = null; // {x,y,z,total,delta}
+
+  function setStatus(text, cls) { statusEl.textContent = text; statusEl.className = 'status' + (cls ? ' ' + cls : ''); }
+
+  function cause(d) {
+    if (d < 2) return ['Background noise. Nothing unusual nearby.', ''];
+    if (d < 10) return ['Small change: steel in a wall or furniture, house wiring, or the phone shifting slightly.', 'warn'];
+    if (d < 50) return ['Clear spike: an appliance, plug, speaker, laptop or metal object close by.', 'warn'];
+    return ['Strong source very close: a magnet, motor, transformer or the phone\'s own case or cover.', 'hot'];
+  }
+
+  function startCalibration() {
+    calibSamples = []; calibrating = true; baseline = null;
+    $('hint').textContent = 'Setting baseline… keep the phone still.'; $('hint').className = 'hint';
+  }
+
+  function onReading(x, y, z) {
+    const total = Math.hypot(x, y, z);
+    const now = performance.now();
+    if (calibrating) {
+      calibSamples.push(total);
+      if (calibSamples.length >= 60) {
+        const s = [...calibSamples].sort((a, b) => a - b);
+        baseline = s[Math.floor(s.length / 2)];
+        calibrating = false;
+        $('hint').textContent = 'Baseline set at ' + baseline.toFixed(1) + ' µT. Watching for changes.';
+      }
+    }
+    const delta = baseline == null ? 0 : Math.abs(total - baseline);
+    cur = { x, y, z, total, delta };
+    history.push({ t: now, d: delta });
+    while (history.length && now - history[0].t > WINDOW_MS) history.shift();
+
+    if (baseline != null && delta >= threshold && now - lastAlert > 1500) {
+      lastAlert = now;
+      const [why] = cause(delta);
+      const ev = { time: new Date(), total, delta, moving, why };
+      events.unshift(ev);
+      addLog(ev);
+      alertUser(delta);
+    }
+  }
+
+  function addLog(ev) {
+    const log = $('log');
+    const empty = log.querySelector('.empty'); if (empty) empty.remove();
+    const li = document.createElement('li');
+    const t = ev.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    li.innerHTML = '<span class="t"></span><span class="w"></span><span class="d"></span>';
+    li.children[0].textContent = t;
+    li.children[1].textContent = (ev.moving ? 'Phone moved. ' : '') + ev.why;
+    li.children[2].textContent = '+' + ev.delta.toFixed(1);
+    li.children[2].style.color = ev.delta >= 50 ? 'var(--hot)' : 'var(--warn)';
+    li.style.gridTemplateColumns = 'auto 1fr auto';
+    log.prepend(li);
+  }
+
+  function alertUser(delta) {
+    try { navigator.vibrate && navigator.vibrate(120); } catch (e) {}
+    if (!soundOn || !audioCtx) return;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.frequency.value = 400 + Math.min(delta, 100) * 8;
+    g.gain.setValueAtTime(0.15, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.25);
+    o.connect(g).connect(audioCtx.destination); o.start(); o.stop(audioCtx.currentTime + 0.26);
+  }
+
+  async function start() {
+    if (sensor) { startCalibration(); return; }
+    if (!window.isSecureContext) { setStatus('Needs https', 'err'); $('hint').textContent = 'Open this page from an https website. The sensor is blocked on plain http and local files.'; $('hint').className = 'hint hot'; return; }
+    if (!('Magnetometer' in window)) {
+      setStatus('Sensor not available', 'err');
+      $('hint').textContent = 'This browser does not expose the magnetometer. On Android Chrome, enable "Generic Sensor Extra Classes" in chrome://flags. iPhones are not supported. See "How to get it working" below.';
+      $('hint').className = 'hint hot'; return;
+    }
+    try {
+      if (navigator.permissions) {
+        const p = await navigator.permissions.query({ name: 'magnetometer' }).catch(() => null);
+        if (p && p.state === 'denied') { setStatus('Permission denied', 'err'); $('hint').textContent = 'Motion sensor access is blocked for this site. Allow it in Chrome\'s site settings and reload.'; $('hint').className = 'hint hot'; return; }
+      }
+      sensor = new Magnetometer({ frequency: 30 });
+      sensor.addEventListener('reading', () => onReading(sensor.x, sensor.y, sensor.z));
+      sensor.addEventListener('error', e => {
+        const n = e.error && e.error.name;
+        setStatus(n === 'NotAllowedError' ? 'Permission denied' : 'Sensor error', 'err');
+        $('hint').textContent = n === 'NotReadableError' ? 'This phone does not have a usable magnetometer, or another app is holding it.' : 'The sensor stopped: ' + (e.error ? e.error.message : 'unknown error');
+        $('hint').className = 'hint hot';
+      });
+      sensor.start();
+      setStatus('Live', 'live');
+      $('start').textContent = 'Restart baseline';
+      startCalibration();
+      try { await navigator.wakeLock.request('screen'); } catch (e) {}
+    } catch (err) {
+      setStatus('Sensor error', 'err');
+      $('hint').textContent = 'Could not start the sensor: ' + err.message; $('hint').className = 'hint hot';
+    }
+  }
+
+  // Phone movement check: real rotation makes magnetometer readings change on their own.
+  window.addEventListener('devicemotion', e => {
+    const r = e.rotationRate; if (!r) return;
+    const rate = Math.abs(r.alpha || 0) + Math.abs(r.beta || 0) + Math.abs(r.gamma || 0);
+    if (rate > 25) lastMove = performance.now();
+    moving = performance.now() - lastMove < 800;
+  });
+
+  $('start').addEventListener('click', () => {
+    try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+    start();
+  });
+  $('calib').addEventListener('click', () => { if (sensor) startCalibration(); });
+  $('sound').addEventListener('click', e => {
+    soundOn = !soundOn;
+    try { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume(); } catch (er) {}
+    e.currentTarget.setAttribute('aria-pressed', soundOn); e.currentTarget.textContent = 'Sound alerts: ' + (soundOn ? 'on' : 'off');
+  });
+  $('thresh').addEventListener('input', e => { threshold = +e.target.value; $('threshv').textContent = threshold + ' µT'; });
+  $('export').addEventListener('click', () => {
+    const rows = [['time', 'total_uT', 'change_uT', 'phone_moving', 'likely_cause']];
+    events.slice().reverse().forEach(ev => rows.push([ev.time.toISOString(), ev.total.toFixed(2), ev.delta.toFixed(2), ev.moving ? 'yes' : 'no', '"' + ev.why.replace(/"/g, '""') + '"']));
+    const blob = new Blob([rows.map(r => r.join(',')).join('\n')], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'emf-log-' + new Date().toISOString().slice(0, 16).replace(':', '') + '.csv';
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+
+  // Drawing
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  function fit(c) {
+    const r = c.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+    if (c.width !== Math.round(r.width * dpr) || c.height !== Math.round(r.height * dpr)) { c.width = Math.round(r.width * dpr); c.height = Math.round(r.height * dpr); }
+    const ctx = c.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); return [ctx, r.width, r.height];
+  }
+  // Log scale 0.5 → 200 µT so small and large changes both show
+  const MIN = 0.5, MAX = 200;
+  const frac = d => Math.max(0, Math.min(1, Math.log(Math.max(d, MIN) / MIN) / Math.log(MAX / MIN)));
+  let needle = 0;
+
+  function drawDial() {
+    const [ctx, w, h] = fit($('dial'));
+    ctx.clearRect(0, 0, w, h);
+    const cx = w / 2, cy = h * 0.88, R = Math.min(w / 2 - 12, h * 0.8);
+    const a0 = Math.PI, a1 = 2 * Math.PI;
+    const zones = [[0, frac(10), css('--calm')], [frac(10), frac(50), css('--warn')], [frac(50), 1, css('--hot')]];
+    ctx.lineWidth = 10; ctx.lineCap = 'butt';
+    zones.forEach(([s, e, c]) => { ctx.strokeStyle = c; ctx.globalAlpha = 0.85; ctx.beginPath(); ctx.arc(cx, cy, R, a0 + s * Math.PI, a0 + e * Math.PI); ctx.stroke(); });
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = css('--muted'); ctx.strokeStyle = css('--muted'); ctx.lineWidth = 1.5;
+    ctx.font = '600 11px ' + css('--mono'); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    [0.5, 1, 2, 5, 10, 20, 50, 100, 200].forEach(v => {
+      const a = a0 + frac(v) * Math.PI, ix = Math.cos(a), iy = Math.sin(a);
+      ctx.beginPath(); ctx.moveTo(cx + ix * (R - 9), cy + iy * (R - 9)); ctx.lineTo(cx + ix * (R - 18), cy + iy * (R - 18)); ctx.stroke();
+      ctx.fillText(v < 1 ? '.5' : v, cx + ix * (R - 32), cy + iy * (R - 32));
+    });
+    const target = cur && baseline != null ? frac(cur.delta) : 0;
+    needle += (target - needle) * 0.25;
+    const a = a0 + needle * Math.PI;
+    ctx.strokeStyle = css('--brass'); ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(a) * (R - 22), cy + Math.sin(a) * (R - 22)); ctx.stroke();
+    ctx.fillStyle = css('--brass'); ctx.beginPath(); ctx.arc(cx, cy, 6, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillStyle = css('--muted'); ctx.font = '600 10px ' + css('--mono'); ctx.fillText('µT CHANGE', cx, cy - R * 0.38);
+  }
+
+  function drawTrace() {
+    const [ctx, w, h] = fit($('trace'));
+    ctx.clearRect(0, 0, w, h);
+    const now = performance.now(), padL = 30, padB = 4;
+    const peak = Math.max(threshold * 2, 10, ...history.map(p => p.d));
+    const top = Math.ceil(peak / 10) * 10;
+    const y = v => (h - padB) - (v / top) * (h - padB - 8);
+    ctx.strokeStyle = css('--line'); ctx.fillStyle = css('--muted'); ctx.lineWidth = 1;
+    ctx.font = '400 10px ' + css('--mono'); ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    [0, top / 2, top].forEach(v => { ctx.beginPath(); ctx.moveTo(padL, y(v)); ctx.lineTo(w, y(v)); ctx.stroke(); ctx.fillText(Math.round(v), padL - 6, y(v)); });
+    ctx.setLineDash([4, 4]); ctx.strokeStyle = css('--hot'); ctx.globalAlpha = 0.7;
+    ctx.beginPath(); ctx.moveTo(padL, y(threshold)); ctx.lineTo(w, y(threshold)); ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha = 1;
+    if (history.length > 1) {
+      const x = t => padL + (1 - (now - t) / WINDOW_MS) * (w - padL);
+      ctx.beginPath(); history.forEach((p, i) => i ? ctx.lineTo(x(p.t), y(p.d)) : ctx.moveTo(x(p.t), y(p.d)));
+      ctx.strokeStyle = css('--brass'); ctx.lineWidth = 2; ctx.stroke();
+      ctx.lineTo(x(history[history.length - 1].t), y(0)); ctx.lineTo(x(history[0].t), y(0)); ctx.closePath();
+      ctx.fillStyle = css('--brass'); ctx.globalAlpha = 0.12; ctx.fill(); ctx.globalAlpha = 1;
+    }
+  }
+
+  function loop() {
+    if (cur) {
+      $('total').textContent = cur.total.toFixed(1);
+      $('ax').textContent = cur.x.toFixed(1); $('ay').textContent = cur.y.toFixed(1); $('az').textContent = cur.z.toFixed(1);
+      if (baseline != null) {
+        $('delta').textContent = '+' + cur.delta.toFixed(1) + ' µT';
+        const [txt, lvl] = cause(cur.delta);
+        $('hint').textContent = txt; $('hint').className = 'hint' + (lvl ? ' ' + lvl : '');
+      }
+    }
+    $('moving').hidden = !moving;
+    drawDial(); drawTrace();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
